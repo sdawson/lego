@@ -9,6 +9,7 @@ import (
 	"math/rand"
 	"net/http"
 	"net/url"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -74,7 +75,12 @@ func (c Client) doRequest(ctx context.Context, endpoint *url.URL, params url.Val
 	}
 
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set(authenticationHeader, c.createSignature(endpoint.Path, payload))
+	signature, err := c.CreateSignature(endpoint.Path, payload, c.createSalt(), time.Now().Unix())
+	if err != nil {
+		return fmt.Errorf("unable to create signature: %w", err)
+	}
+
+	req.Header.Set(authenticationHeader, signature)
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -90,11 +96,9 @@ func (c Client) doRequest(ctx context.Context, endpoint *url.URL, params url.Val
 	return nil
 }
 
-func (c Client) createSignature(uri string, body string) string {
-	// This is the only part of this that needs to be serialized.
-	salt := make([]byte, 16)
-	for i := 0; i < 16; i++ {
-		salt[i] = saltBytes[rand.Intn(len(saltBytes))]
+func (c Client) CreateSignature(uri string, body string, salt []byte, timestamp int64) (string, error) {
+	if len(salt) != 16 {
+		return nil, fmt.Errorf("invalid salt length, expecting 16 bytes, got %v", len(salt))
 	}
 
 	// Header is "login;timestamp;salt;hash".
@@ -102,11 +106,20 @@ func (c Client) createSignature(uri string, body string) string {
 	// and body-hash is SHA1(body).
 
 	bodyHash := sha1.Sum([]byte(body))
-	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+	ts := strconv.FormatInt(timestamp, 10)
 
-	hashInput := fmt.Sprintf("%s;%s;%s;%s;%s;%02x", c.login, timestamp, salt, c.apiKey, uri, bodyHash)
+	hashInput := fmt.Sprintf("%s;%s;%s;%s;%s;%02x", c.login, ts, salt, c.apiKey, path.Join("/", uri), bodyHash)
 
-	return fmt.Sprintf("%s;%s;%s;%02x", c.login, timestamp, salt, sha1.Sum([]byte(hashInput)))
+	return fmt.Sprintf("%s;%s;%s;%02x", c.login, ts, salt, sha1.Sum([]byte(hashInput))), nil
+}
+
+func (c Client) createSalt() []byte {
+	// This is the only part of this that needs to be serialized.
+	salt := make([]byte, 16)
+	for i := 0; i < 16; i++ {
+		salt[i] = saltBytes[rand.Intn(len(saltBytes))]
+	}
+	return salt
 }
 
 func parseError(req *http.Request, resp *http.Response) error {

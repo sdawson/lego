@@ -8,8 +8,10 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -34,7 +36,8 @@ func testHandler(params map[string]string) http.HandlerFunc {
 			return
 		}
 
-		if req.Header.Get(authenticationHeader) == "" {
+		authenticationHeader := req.Header.Get(authenticationHeader)
+		if authenticationHeader == "" {
 			http.Error(rw, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 			return
 		}
@@ -146,4 +149,22 @@ func TestClient_RemoveRecord_error(t *testing.T) {
 
 	err := client.RemoveRecord(context.Background(), "example.com", record)
 	require.Error(t, err)
+}
+
+func TestCreateSignature(t *testing.T) {
+	client, _ := setupTest(t)
+
+	examplePath := "dns/example.com/listRRs"
+	body := "test"
+	now := int64(1692506718)
+	salt := []byte("sixteenbyteshere")
+
+	signature, err := client.CreateSignature(examplePath, body, salt, now)
+	expected := "user;1692506718;sixteenbyteshere;471be153f8a2f3022b63957e6be19b5355bf1625"
+	require.NoError(t, err)
+	assert.Equal(t, expected, signature)
+
+	signature, err = client.CreateSignature(path.Join("/", examplePath), body, salt, now)
+	require.NoError(t, err)
+	assert.Equal(t, expected, signature)
 }
